@@ -4,6 +4,7 @@ using System.IO;
 using System.Text;
 using System.Timers;
 using System.Diagnostics;
+using System.Data.Linq;
 using Newtonsoft.Json;
 using System.Net.Sockets;
 using System.Net;
@@ -23,22 +24,34 @@ namespace transferNewestFile
         static string src_file_path = @"C:\davs";
         static List<string> list_transfered_names = new List<string>();//已经处理过的文件的名称列表
         static Socket udp_client;
-        static IPEndPoint ipep;
-        static int udp_des_port = 10001;
+        //static IPEndPoint ipep;
+        //static int udp_des_port = 10001;
+        static Dictionary<string, Action<string>> udp_client_fun_list = new Dictionary<string, Action<string>>();//保存发送dav文件名到目的UDP的函数列表
+
 
         static void Main(string[] args)
         {
             //exportData();
             importData();
-            ipep = new IPEndPoint(IPAddress.Parse("127.0.0.1"), udp_des_port);
+            //ipep = new IPEndPoint(IPAddress.Parse(GetLocalIP4()), udp_des_port);
             udp_client = new Socket(AddressFamily.InterNetwork, SocketType.Dgram, ProtocolType.Udp);
 
+            for (int i = 10001; i <= 10003; i++)
+            {
+                IPEndPoint local_ipep = new IPEndPoint(IPAddress.Parse(GetLocalIP4()), i);
+                udp_client_fun_list.Add(i.ToString(), (_data) =>
+                {
+                    byte[] data = Encoding.ASCII.GetBytes(_data);
+                    udp_client.SendTo(data, data.Length, SocketFlags.None, local_ipep);
+                });
+            }
 
             Console.WriteLine("系统启动...");
             Console.WriteLine("Dav文件夹： " + src_file_path);
             Console.WriteLine("最大缓存文件数： " + MAX_FILE_COUNT.ToString());
-            Console.WriteLine("目标UDP端口： " + udp_des_port.ToString());
+            //Console.WriteLine("目标UDP端口： " + udp_des_port.ToString());
 
+            //var list = from l in list_transfered_names select l;
 
             Timer timer = new Timer(3000);
             timer.Elapsed += (sender, e) =>
@@ -108,8 +121,13 @@ namespace transferNewestFile
         private static void report_file_name_by_udp(string file_name)
         {
             Console.WriteLine("Report => " + file_name);
-            byte[] data = Encoding.ASCII.GetBytes(file_name);
-            udp_client.SendTo(data, data.Length, SocketFlags.None, ipep);
+            try
+            {
+                udp_client_fun_list[Get_group_id(file_name)](file_name);
+            }
+            catch { }
+            //byte[] data = Encoding.ASCII.GetBytes(file_name);
+            //udp_client.SendTo(data, data.Length, SocketFlags.None, ipep);
         }
 
         static string Get_des_folder_existed_file(string _file_name, string _file_path)
@@ -168,6 +186,7 @@ namespace transferNewestFile
         static List<string> Find_not_transfered_file(List<string> list_newest_bmp,
                                                      List<string> list_transfered_file_name)
         {
+            //from l in list_newest_bmp select
             return list_newest_bmp.FindAll(
                            (_name) =>
                            {
@@ -193,6 +212,8 @@ namespace transferNewestFile
             if (totalCount > 0)
             {
                 //List<FileInfo> new_files = files.GetRange(1, totalCount - 1);
+
+                
 
                 List<FileInfo> files_to_search = files.FindAll(
                     (_file_info) =>
@@ -325,7 +346,7 @@ namespace transferNewestFile
         }
         static void importData()
         {
-            string strReadFilePath1 = @"./config.txt";
+            string strReadFilePath1 = @"./config/config_dav_reporter.txt";
             StreamReader srReadFile1 = new StreamReader(strReadFilePath1);
             string strConfig = srReadFile1.ReadToEnd();
             srReadFile1.Close();
@@ -344,6 +365,28 @@ namespace transferNewestFile
             string output = JsonConvert.SerializeObject(cfg);
 
             return output;
+        }
+        static string GetLocalIP4()
+        {
+            IPAddress ipAddress = null;
+            IPHostEntry ipHostInfo = Dns.GetHostEntry(Dns.GetHostName());
+            for (int i = 0; i < ipHostInfo.AddressList.Length; i++)
+            {
+                ipAddress = ipHostInfo.AddressList[i];
+                if (ipAddress.AddressFamily == AddressFamily.InterNetwork)
+                {
+                    break;
+                }
+                else
+                {
+                    ipAddress = null;
+                }
+            }
+            if (null == ipAddress)
+            {
+                return null;
+            }
+            return ipAddress.ToString();
         }
     }
     public class Config
