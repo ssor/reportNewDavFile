@@ -4,7 +4,7 @@ using System.IO;
 using System.Text;
 using System.Timers;
 using System.Diagnostics;
-using System.Data.Linq;
+using System.Linq;
 using Newtonsoft.Json;
 using System.Net.Sockets;
 using System.Net;
@@ -51,7 +51,6 @@ namespace transferNewestFile
             Console.WriteLine("最大缓存文件数： " + MAX_FILE_COUNT.ToString());
             //Console.WriteLine("目标UDP端口： " + udp_des_port.ToString());
 
-            //var list = from l in list_transfered_names select l;
 
             Timer timer = new Timer(3000);
             timer.Elapsed += (sender, e) =>
@@ -73,7 +72,7 @@ namespace transferNewestFile
 
             //找出每类文件的最新的一个
             List<string> list_newest_file
-                = Find_newest_file_list(new List<FileInfo>(all_files), null, src_file_path);
+                = Find_newest_file_list(all_files.Select(_file_info => _file_info.Name).ToList<string>(), null, src_file_path);
 
             Debug.WriteLine("每类最新文件的列表如下：");
             Display(list_newest_file, false);
@@ -134,16 +133,26 @@ namespace transferNewestFile
         {
             DirectoryInfo TheFolder = new DirectoryInfo(_file_path);
             FileInfo[] all_files = TheFolder.GetFiles();
-            List<string> list_all_file_names = new List<FileInfo>(all_files).ConvertAll<string>(
-                (_file_info) =>
-                {
-                    return _file_info.Name;
-                });
-            List<string> list_file_with_same_group = list_all_file_names.FindAll(
-                (_file_temp) =>
-                {
-                    return Get_group_id(_file_temp) == Get_group_id(_file_name);
-                });
+
+            //var list_all_file_names = all_files.Select(_file_info => _file_info.Name).ToList<string>();
+            //List<string> list_file_with_same_group
+            //    = list_all_file_names.
+            //          Where(_file_temp => Get_group_id(_file_temp) == Get_group_id(_file_name)).ToList<string>();
+            var list_file_with_same_group = all_files.Where(_file_info => { return Get_group_id(_file_info.Name) == Get_group_id(_file_name); })
+                                                   .Select(_file_info => _file_info.Name).ToList<string>();
+
+            //List<string> list_all_file_names = from _file_info in (new List<FileInfo>(all_files)) select _file_info.Name;
+            //List<string> list_all_file_names = new List<FileInfo>(all_files).ConvertAll<string>(
+            //    (_file_info) =>
+            //    {
+            //        return _file_info.Name;
+            //    });
+            //List<string> list_file_with_same_group = list_all_file_names.FindAll(
+            //    (_file_temp) =>
+            //    {
+            //        return Get_group_id(_file_temp) == Get_group_id(_file_name);
+            //    });
+
             if (list_file_with_same_group.Count > 0)
             {
                 return list_file_with_same_group[0];
@@ -157,12 +166,14 @@ namespace transferNewestFile
         private static List<string> Refresh_transfered_names_list(string file_name,
                                                                   List<string> _list_transfered_names)
         {
-            List<string> list_new = _list_transfered_names.GetRange(0, _list_transfered_names.Count);
-            list_new.RemoveAll(
-                (_name) =>
-                {
-                    return Get_group_id(_name) == Get_group_id(file_name);
-                });
+
+            //List<string> list_new = _list_transfered_names.GetRange(0, _list_transfered_names.Count);
+            var list_new = _list_transfered_names.Where(_name => Get_group_id(_name) != Get_group_id(file_name)).ToList<string>();
+            //list_new.RemoveAll(
+            //    (_name) =>
+            //    {
+            //        return Get_group_id(_name) == Get_group_id(file_name);
+            //    });
             list_new.Add(file_name);
             return list_new;
         }
@@ -180,26 +191,27 @@ namespace transferNewestFile
         /// <summary>
         /// 查找未处理过的文件（,如果文件的名称变小，将可能将其认为是最新的）
         /// </summary>
-        /// <param name="list_newest_bmp"></param>
+        /// <param name="list_newest_file"></param>
         /// <param name="list_transfered_file_name"></param>
         /// <returns></returns>
-        static List<string> Find_not_transfered_file(List<string> list_newest_bmp,
+        static List<string> Find_not_transfered_file(List<string> list_newest_file,
                                                      List<string> list_transfered_file_name)
         {
-            //from l in list_newest_bmp select
-            return list_newest_bmp.FindAll(
-                           (_name) =>
-                           {
-                               return !list_transfered_file_name.Exists(
-                                    (_transerfered_name) =>
-                                    {
-                                        return _transerfered_name == _name;
-                                    });
-                           });
+            return list_newest_file.Except(list_transfered_file_name).ToList<string>();
+
+            //return list_newest_bmp.FindAll(
+            //               (_name) =>
+            //               {
+            //                   return !list_transfered_file_name.Exists(
+            //                        (_transerfered_name) =>
+            //                        {
+            //                            return _transerfered_name == _name;
+            //                        });
+            //               });
         }
 
         //找到不同类里面最新的文件
-        static List<string> Find_newest_file_list(List<FileInfo> files,
+        static List<string> Find_newest_file_list(List<string> files,
                                                   List<string> _list_finded_newest_file,
                                                   string _file_path)
         {
@@ -208,31 +220,40 @@ namespace transferNewestFile
                 _list_finded_newest_file = new List<string>();
             }
             if (files == null) return _list_finded_newest_file;
+
+
+
             int totalCount = files.Count;
             if (totalCount > 0)
             {
-                //List<FileInfo> new_files = files.GetRange(1, totalCount - 1);
+                //List<string> files_to_search = files.FindAll(
+                //    (_file_info) =>
+                //    {
+                //        return !_list_finded_newest_file.Exists(
+                //            (_finded_file_name) =>
+                //            {
+                //                return Get_group_id(_finded_file_name) == Get_group_id(_file_info.Name);
+                //            });
+                //    });
+                //List<string> finded_goup = _list_finded_newest_file.Select(_file => Get_group_id(_file)).ToList<string>();
+                //IEnumerable<string> finded_goup_files = files.Where(_file => { return finded_goup.Exists(Get_group_id(_file.Name)); }).Select(_file => _file.Name);
+                //List<string> files_to_search = files.Except(_list_finded_newest_file).ToList<string>();
 
-                
-
-                List<FileInfo> files_to_search = files.FindAll(
-                    (_file_info) =>
-                    {
-                        return !_list_finded_newest_file.Exists(
-                            (_finded_file_name) =>
-                            {
-                                return Get_group_id(_finded_file_name) == Get_group_id(_file_info.Name);
-                            });
-                    });
-                List<string> list_files = Get_group_file_list(files_to_search, _list_finded_newest_file);
+                List<string> list_files = Get_group_file_list(files, _list_finded_newest_file);
 
                 if (list_files != null)
                 {
                     string newest_file = Get_newest_file_from_list(list_files, _file_path);
-                    List<string> list_finded_newest_file = new List<string>(_list_finded_newest_file);
-                    list_finded_newest_file.Add(newest_file);
+                    if (newest_file != string.Empty)
+                    {
+                        List<string> list_finded_newest_file = new List<string>(_list_finded_newest_file);
+                        list_finded_newest_file.Add(newest_file);
 
-                    return Find_newest_file_list(files, list_finded_newest_file, _file_path);
+                        return Find_newest_file_list(files.Except(list_files).ToList<string>(), list_finded_newest_file, _file_path);
+                    }
+                    else
+                        return Find_newest_file_list(files.Except(list_files).ToList<string>(), _list_finded_newest_file, _file_path);
+
                 }
                 else
                 {
@@ -251,7 +272,7 @@ namespace transferNewestFile
         {
             if (_list_files == null) return null;
             if (_list_files.Count == 0) return string.Empty;
-            if (_list_files.Count == 1) return _list_files[0];
+            //if (_list_files.Count == 1) return _list_files[0];
 
             List<string> list_files = new List<string>(_list_files);
             list_files.Sort((_first, _second) =>
@@ -296,27 +317,30 @@ namespace transferNewestFile
         /// </summary>
         /// <param name="files">文件列表</param>
         /// <returns></returns>
-        private static List<string> Get_group_file_list(List<FileInfo> files, List<string> _finded_new_files)
+        private static List<string> Get_group_file_list(List<string> files, List<string> _finded_new_files)
         {
             if (files.Count <= 0) return null;
 
-            FileInfo fi = files[0];
-            string file_name = fi.Name;
+            string file_name = files[0];
             string group_name = Get_group_id(file_name);
 
-            //找到文件名前缀与group_name相同的文件
-            List<FileInfo> list_files_in_group = files.FindAll(
-                (_file) =>
-                {
-                    return Get_group_id(_file.Name) == group_name;
-                });
+            return (from _file in files
+                    where Get_group_id(_file) == group_name
+                    select _file).ToList<string>();
 
-            //将找到的文件列表的文件名作为列表返回
-            return list_files_in_group.ConvertAll<string>(
-                (_file) =>
-                {
-                    return _file.Name;
-                });
+            ////找到文件名前缀与group_name相同的文件
+            //List<FileInfo> list_files_in_group = files.FindAll(
+            //    (_file) =>
+            //    {
+            //        return Get_group_id(_file.Name) == group_name;
+            //    });
+
+            ////将找到的文件列表的文件名作为列表返回
+            //return list_files_in_group.ConvertAll<string>(
+            //    (_file) =>
+            //    {
+            //        return _file.Name;
+            //    });
         }//获取该组图片的文件名列表
         private static void Display(List<string> list, bool onConsole)
         {
