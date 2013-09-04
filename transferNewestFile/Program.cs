@@ -8,6 +8,7 @@ using System.Linq;
 using Newtonsoft.Json;
 using System.Net.Sockets;
 using System.Net;
+using System.Threading;
 /*
 /**********************************************************************************
  * 
@@ -26,25 +27,15 @@ namespace transferNewestFile
         static Socket udp_client;
         //static IPEndPoint ipep;
         //static int udp_des_port = 10001;
-        static Dictionary<string, Action<string>> udp_client_fun_list = new Dictionary<string, Action<string>>();//保存发送dav文件名到目的UDP的函数列表
+        static Dictionary<string, Action<string>> udp_client_fun_list = null;//保存发送dav文件名到目的UDP的函数列表
 
 
         static void Main(string[] args)
         {
             //exportData();
-            importData();
-            //ipep = new IPEndPoint(IPAddress.Parse(GetLocalIP4()), udp_des_port);
-            udp_client = new Socket(AddressFamily.InterNetwork, SocketType.Dgram, ProtocolType.Udp);
+            importData(@"./config/config_dav_reporter.txt");
 
-            for (int i = 10001; i <= 10003; i++)
-            {
-                IPEndPoint local_ipep = new IPEndPoint(IPAddress.Parse(GetLocalIP4()), i);
-                udp_client_fun_list.Add(i.ToString(), (_data) =>
-                {
-                    byte[] data = Encoding.ASCII.GetBytes(_data);
-                    udp_client.SendTo(data, data.Length, SocketFlags.None, local_ipep);
-                });
-            }
+            udp_client_fun_list = initial_udp_client_fun(new List<int> { 10001, 10002, 10003 }, null);
 
             Console.WriteLine("系统启动...");
             Console.WriteLine("Dav文件夹： " + src_file_path);
@@ -52,10 +43,10 @@ namespace transferNewestFile
             //Console.WriteLine("目标UDP端口： " + udp_des_port.ToString());
 
 
-            Timer timer = new Timer(3000);
+            System.Timers.Timer timer = new System.Timers.Timer(3000);
             timer.Elapsed += (sender, e) =>
             {
-                start_loop();
+                start_loop(src_file_path);
 
             };
             timer.Enabled = true;
@@ -64,15 +55,89 @@ namespace transferNewestFile
             //start_loop();
             Console.ReadLine();
         }
-        static void start_loop()
+        static Dictionary<string, Action<string>> initial_udp_client_fun(List<int> port_list, Dictionary<string, Action<string>> _udp_client_fun_list)
         {
-            DirectoryInfo TheFolder = new DirectoryInfo(src_file_path);
+            if (_udp_client_fun_list == null)
+            {
+                _udp_client_fun_list = new Dictionary<string, Action<string>>();
+            }
+            if (port_list.Count <= 0) return _udp_client_fun_list;
+
+            Socket _udp_client = new Socket(AddressFamily.InterNetwork, SocketType.Dgram, ProtocolType.Udp);
+
+            int count = port_list.Count;
+            int port = port_list[count - 1];
+            IPEndPoint local_ipep = new IPEndPoint(IPAddress.Parse(GetLocalIP4()), port_list[count - 1]);
+
+            string name = "Player" + port.ToString();
+            string full_path = "./videoApp/Player/" + name + ".exe";
+
+            ProcessStartInfo info;
+            info = new ProcessStartInfo(full_path);
+            info.WindowStyle = ProcessWindowStyle.Hidden;
+            info.CreateNoWindow = false;
+            info.RedirectStandardOutput = true;
+            info.UseShellExecute = false;
+
+
+            _udp_client_fun_list.Add(port.ToString(), (_data) =>
+            {
+                System.Threading.Thread thread = new Thread(new ThreadStart(() =>
+{
+
+    byte[] data = Encoding.ASCII.GetBytes(_data);
+    //关闭当前的player，启动一个新的player
+
+    try
+    {
+
+        Process[] finded_processes = Process.GetProcessesByName(name);
+        if (finded_processes.Length > 0)
+        {
+            for (int i = 0; i < finded_processes.Length; i++)
+            {
+                finded_processes[i].Kill();
+            }
+        }
+
+        Console.WriteLine(name + " 已经退出，即将启动...");
+        Process process = Process.Start(info);
+
+        Console.WriteLine(name + " 已经启动...");
+
+        using (StreamReader reader = process.StandardOutput)
+        {
+            string line = reader.ReadLine();
+            while (line != null)
+            {
+                Console.WriteLine(line);
+                line = reader.ReadLine();
+            }
+        }
+
+        Thread.Sleep(3000);
+        _udp_client.SendTo(data, data.Length, SocketFlags.None, local_ipep);
+    }
+    catch (Exception e)
+    {
+        Console.WriteLine(e.Message);
+    }
+
+}));
+                thread.Start();
+            });
+
+            return initial_udp_client_fun(port_list.GetRange(0, count - 1), _udp_client_fun_list);
+        }
+        static void start_loop(string _src_file_path)
+        {
+            DirectoryInfo TheFolder = new DirectoryInfo(_src_file_path);
 
             FileInfo[] all_files = TheFolder.GetFiles();
 
             //找出每类文件的最新的一个
             List<string> list_newest_file
-                = Find_newest_file_list(all_files.Select(_file_info => _file_info.Name).ToList<string>(), null, src_file_path);
+                = Find_newest_file_list(all_files.Select(_file_info => _file_info.Name).ToList<string>(), null, _src_file_path);
 
             Debug.WriteLine("每类最新文件的列表如下：");
             Display(list_newest_file, false);
@@ -94,7 +159,7 @@ namespace transferNewestFile
 
             //处理新找到的未处理文件并更新列表
             list_transfered_names
-                = Act_on_file(list_no_transfered_file, list_transfered_names, src_file_path);
+                = Act_on_file(list_no_transfered_file, list_transfered_names, _src_file_path);
         }
         static List<string> Act_on_file(List<string> _list_no_transfered_dav,
                                                List<string> _list_transfered_names,
@@ -134,24 +199,8 @@ namespace transferNewestFile
             DirectoryInfo TheFolder = new DirectoryInfo(_file_path);
             FileInfo[] all_files = TheFolder.GetFiles();
 
-            //var list_all_file_names = all_files.Select(_file_info => _file_info.Name).ToList<string>();
-            //List<string> list_file_with_same_group
-            //    = list_all_file_names.
-            //          Where(_file_temp => Get_group_id(_file_temp) == Get_group_id(_file_name)).ToList<string>();
             var list_file_with_same_group = all_files.Where(_file_info => { return Get_group_id(_file_info.Name) == Get_group_id(_file_name); })
                                                    .Select(_file_info => _file_info.Name).ToList<string>();
-
-            //List<string> list_all_file_names = from _file_info in (new List<FileInfo>(all_files)) select _file_info.Name;
-            //List<string> list_all_file_names = new List<FileInfo>(all_files).ConvertAll<string>(
-            //    (_file_info) =>
-            //    {
-            //        return _file_info.Name;
-            //    });
-            //List<string> list_file_with_same_group = list_all_file_names.FindAll(
-            //    (_file_temp) =>
-            //    {
-            //        return Get_group_id(_file_temp) == Get_group_id(_file_name);
-            //    });
 
             if (list_file_with_same_group.Count > 0)
             {
@@ -167,13 +216,7 @@ namespace transferNewestFile
                                                                   List<string> _list_transfered_names)
         {
 
-            //List<string> list_new = _list_transfered_names.GetRange(0, _list_transfered_names.Count);
             var list_new = _list_transfered_names.Where(_name => Get_group_id(_name) != Get_group_id(file_name)).ToList<string>();
-            //list_new.RemoveAll(
-            //    (_name) =>
-            //    {
-            //        return Get_group_id(_name) == Get_group_id(file_name);
-            //    });
             list_new.Add(file_name);
             return list_new;
         }
@@ -198,16 +241,6 @@ namespace transferNewestFile
                                                      List<string> list_transfered_file_name)
         {
             return list_newest_file.Except(list_transfered_file_name).ToList<string>();
-
-            //return list_newest_bmp.FindAll(
-            //               (_name) =>
-            //               {
-            //                   return !list_transfered_file_name.Exists(
-            //                        (_transerfered_name) =>
-            //                        {
-            //                            return _transerfered_name == _name;
-            //                        });
-            //               });
         }
 
         //找到不同类里面最新的文件
@@ -226,19 +259,6 @@ namespace transferNewestFile
             int totalCount = files.Count;
             if (totalCount > 0)
             {
-                //List<string> files_to_search = files.FindAll(
-                //    (_file_info) =>
-                //    {
-                //        return !_list_finded_newest_file.Exists(
-                //            (_finded_file_name) =>
-                //            {
-                //                return Get_group_id(_finded_file_name) == Get_group_id(_file_info.Name);
-                //            });
-                //    });
-                //List<string> finded_goup = _list_finded_newest_file.Select(_file => Get_group_id(_file)).ToList<string>();
-                //IEnumerable<string> finded_goup_files = files.Where(_file => { return finded_goup.Exists(Get_group_id(_file.Name)); }).Select(_file => _file.Name);
-                //List<string> files_to_search = files.Except(_list_finded_newest_file).ToList<string>();
-
                 List<string> list_files = Get_group_file_list(files, _list_finded_newest_file);
 
                 if (list_files != null)
@@ -327,20 +347,6 @@ namespace transferNewestFile
             return (from _file in files
                     where Get_group_id(_file) == group_name
                     select _file).ToList<string>();
-
-            ////找到文件名前缀与group_name相同的文件
-            //List<FileInfo> list_files_in_group = files.FindAll(
-            //    (_file) =>
-            //    {
-            //        return Get_group_id(_file.Name) == group_name;
-            //    });
-
-            ////将找到的文件列表的文件名作为列表返回
-            //return list_files_in_group.ConvertAll<string>(
-            //    (_file) =>
-            //    {
-            //        return _file.Name;
-            //    });
         }//获取该组图片的文件名列表
         private static void Display(List<string> list, bool onConsole)
         {
@@ -368,10 +374,9 @@ namespace transferNewestFile
                 Console.WriteLine();
             }
         }
-        static void importData()
+        static void importData(string config_path)
         {
-            string strReadFilePath1 = @"./config/config_dav_reporter.txt";
-            StreamReader srReadFile1 = new StreamReader(strReadFilePath1);
+            StreamReader srReadFile1 = new StreamReader(config_path);
             string strConfig = srReadFile1.ReadToEnd();
             srReadFile1.Close();
             // eg. {"src_file_path":"C:\\Users\\ssor\\Desktop\\pics","dest_file_path":"C:\\Users\\ssor\\Desktop\\picpng","max_file_count":5}
